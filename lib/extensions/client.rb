@@ -9,31 +9,19 @@ module LTSocketIO
 		def initialize(options = {})
 			@handler 			= Handler.new options
 			@watching_fiber		= create_watching_fiber
-			@messages 			= []
+			@listeners 			= {}
 			watch_for_socket_output
 		end
 
-		def watch_for_socket_output
-			main_thread = Thread.new do
+		public
 
-				puts "Start watching for results"
-				loop do
-					puts "iteration"
-					@watching_fiber.resume(@handler.receive_data)
-					# sleep 0.1
-				end
+		def on(event_name, &block); @listeners[event_name.to_sym] = &block end
 
-			end
-		end
+		def emit(event, hash); @handler.send_data("5:::#{json_stringify({ name: event, args: [hash] }, :mode => :compat)}") end
 
-		def message(string)
-			@handler.send_data("3:::#{string}")
-		end
+		def message(string); @handler.send_data("3:::#{string}") end
 
-		def emit(event, hash)
-			packet = { name: event, args: [hash] }
-			@handler.send_data("5:::#{Oj.dump(packet, :mode => :compat)}")
-		end
+		def send_heartbeat; @handler.send_data("2::") end
 
 		def handshaked?; @handler.handshaked? end
 
@@ -51,6 +39,24 @@ module LTSocketIO
 
 			return @watching_fiber			
 		end
+
+		def watch_for_socket_output
+			main_thread = Thread.new do
+
+				puts "Start watching for results"
+				loop do
+					puts "iteration"
+					@watching_fiber.resume(@handler.receive_data)
+					# sleep 0.1
+				end
+
+			end
+		end
+
+
+		def json_stringify(hash); Oj.dump(hash, :mode => :compat) end
+
+		def json_parse(string); Oj.load(string, :mode => :compat) end
 
 	end
 
