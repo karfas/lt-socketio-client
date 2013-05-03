@@ -10,14 +10,14 @@ module LTSocketIO
 			@handler 			= Handler.new options
 			@watching_fiber		= create_watching_fiber
 			@listeners 			= {}
-			watch_for_socket_output
+			connect! and watch_for_socket_output
 		end
 
 		public
 
-		def on(event_name, &block); @listeners[event_name.to_sym] = &block end
+		def on(event_name, &block); @listeners[event_name.to_sym] = block end
 
-		def emit(event, hash); @handler.send_data("5:::#{json_stringify({ name: event, args: [hash] }, :mode => :compat)}") end
+		def emit(event, hash); @handler.send_data("5:::#{json_stringify({ name: event, args: [hash] })}") end
 
 		def message(string); @handler.send_data("3:::#{string}") end
 
@@ -26,6 +26,8 @@ module LTSocketIO
 		def handshaked?; @handler.handshaked? end
 
 		private
+
+		def connect!; @handler.send_data "1::#{@handler.host}" end
 
 		def create_watching_fiber
 			if @watching_fiber.nil? || !@watching_fiber.alive?

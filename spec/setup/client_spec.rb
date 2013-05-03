@@ -8,6 +8,8 @@ describe 'Client' do
 
 	it 'sould send message to server' do
 		@client.message('Plain text')
+		sleep 3
+		true.should == true
 	end
 
 	it 'should emit event to server' do

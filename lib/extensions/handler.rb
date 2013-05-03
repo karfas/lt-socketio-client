@@ -20,6 +20,7 @@ module LTSocketIO
 		end
 
 		def handshake!(options)
+			state State::CONNECTING
 			handshake_url 	= create_uri(@uri.protocol, @uri.host, @uri.port)
 			response 		= RestClient.get  handshake_url
 			websocket_data	= [@uri] + response.split(':') << options
@@ -30,8 +31,8 @@ module LTSocketIO
 			@socket 	= TCPSocket.new uri.host, uri.port
 			@websocket 	= WebSocket::Handshake::Client.new(:url => create_websocket_uri(uri, session_id), :port => uri.port)
 			send_ws_handshake!
-			send_data("1::#{uri.host}")
 			keep_alive!(options) if options[:keep_alive]
+			state State::CONNECTED
 			return true
 		end
 
@@ -56,15 +57,17 @@ module LTSocketIO
 				:data 		=> data,
 				:type 		=> type
 			})
-			write frame
-			flush
+			@socket.write(frame)
 		end
 
 		def receive_data
+			puts read(2)
+			puts @state
 			bytes 	= read(2).unpack('C*')
 			opcode 	= bytes[0] & 0x0f
 			mask 	= (bytes[1] & 0x80) != 0
 			plength = bytes[1] & 0x7f
+
 			case plength
 			when 126
 				bytes 		= read(2)
@@ -81,23 +84,26 @@ module LTSocketIO
 
 			case opcode
 			when OPCode::TEXT
+				puts "Text received"
 				return force_encoding(payload, 'UTF-8')
 			when OPCode::BINARY
 				raise(WebSocket::Error, 'received binary data, which is not supported')
 			when OPCode::CLOSE
-				close(1005, '', :peer)
-				return nil
+				puts "Close received"
+				close(1005, '', :peer) and return
 			when OPCode::PING
-				# raise(WebSocket::Error, 'received ping, which is not supported')
+				raise(LTSocketIO::Error::Handler::PingNotSupportedYet)
 				return nil
 			when OPCode::PONG
 			else
-				# raise(WebSocket::Error, 'received unknown opcode: %d' % opcode)
+				raise(LTSocketIO::Error::Handler::UnknownOpcode, 'received unknown opcode: %d' % opcode)
 				return nil
 			end
 		end
 
 		def handshaked?; @handshaked end
+
+		def host; @uri.host end
 
 		private
 
@@ -128,12 +134,13 @@ module LTSocketIO
 			@socket.write @websocket.to_s
 			line = @socket.gets($/).chomp()
 
-			raise Error("Bad response #{line}") unless (line =~ /\AHTTP\/1.1 101 /n)
+			raise LTSocketIO::Error::Handler::BadResponse unless (line =~ /\AHTTP\/1.1 101 /n)
 
 			flush
 		end
 
 		def apply_mask(payload, mask_key)
+			# puts [payload, mask_key]
 			orig_bytes = payload.unpack('C*')
 			new_bytes = []
 			orig_bytes.each_with_index() do |b, i|
@@ -152,17 +159,15 @@ module LTSocketIO
 			end
 		end
 
-		def incoming_frame
-			WebSocket::Frame::Incoming::Client
-		end
+		def incoming_frame; WebSocket::Frame::Incoming::Client end
 		
-		def outgoing_frame
-			WebSocket::Frame::Outgoing::Client
-		end
+		def outgoing_frame; WebSocket::Frame::Outgoing::Client end
 
 		def read(num_bytes); @socket.read(num_bytes) end
 
 		def write(data); @socket.write(data) end
+
+		def gets(n = $/); @socket.gets end
 
 		def flush; @socket.flush end
 
