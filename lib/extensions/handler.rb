@@ -61,13 +61,13 @@ module LTSocketIO
 		end
 
 		def receive_data
-			puts read(2)
-			puts @state
 			bytes 	= read(2).unpack('C*')
 			opcode 	= bytes[0] & 0x0f
 			mask 	= (bytes[1] & 0x80) != 0
 			plength = bytes[1] & 0x7f
+			DEBUG.info "Getting data. Initialize"
 
+			DEBUG.info [read(2).unpack('A*'), bytes, opcode, mask, plength]
 			case plength
 			when 126
 				bytes 		= read(2)
@@ -78,10 +78,15 @@ module LTSocketIO
 				plength 	= high * ( 2 ** 32 ) + low
 			end
 
+			DEBUG.info "Data resolved"
+
+			return nil unless mask
+
 			mask_key 	= mask ? read(4).unpack('C*') : nil
 			payload 	= read(plength)
 			payload 	= apply_mask(payload, mask_key) if mask
 
+			DEBUG.info "Building response"
 			case opcode
 			when OPCode::TEXT
 				puts "Text received"

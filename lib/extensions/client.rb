@@ -1,4 +1,5 @@
 require 'oj'
+require 'fiber'
 
 module LTSocketIO
 
@@ -8,9 +9,10 @@ module LTSocketIO
 
 		def initialize(options = {})
 			@handler 			= Handler.new options
-			@watching_fiber		= create_watching_fiber
 			@listeners 			= {}
-			connect! and watch_for_socket_output
+			# @watching_fiber 	= @create_watching_fiber
+			connect!
+			watch_for_socket_output
 		end
 
 		public
@@ -31,28 +33,42 @@ module LTSocketIO
 
 		def create_watching_fiber
 			if @watching_fiber.nil? || !@watching_fiber.alive?
+				puts "Creating fiber"
 				@watching_fiber = Fiber.new do |data|
-					@watching_fiber.yield if data.nil?
 
-					puts "Data received"
+					DEBUG.info "Data received"
+					Fiber.yield
 
 				end
 			end
 
-			return @watching_fiber			
+			return @watching_fiber	
 		end
 
 		def watch_for_socket_output
 			main_thread = Thread.new do
 
-				puts "Start watching for results"
+				DEBUG.info "Start watching for results"
+				# fiber 	= Fiber.new do |data|
+
+				# 	puts "I'm a fiber"
+				# 	Fiber.yield
+
+				# end
 				loop do
-					puts "iteration"
-					@watching_fiber.resume(@handler.receive_data)
-					# sleep 0.1
+					DEBUG.info "== FIBER_STARTS"
+					DEBUG.info "#{@handler.receive_data.to_s}"
+					DEBUG.info "== FIBER_STOPS"
 				end
 
+
+				# loop do
+				# 	DEGUB.info "woooohooo"
+				# 	# data = @handler.receive_data
+				# end
+
 			end
+			main_thread
 		end
 
 
