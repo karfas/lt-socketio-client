@@ -8,11 +8,9 @@ module LTSocketIO
 		VERSION = "0.1.0"
 
 		def initialize(options = {})
-			@handler 			= Handler.new options
-			@listeners 			= {}
-			# @watching_fiber 	= @create_watching_fiber
+			@handler = Handler.new(options)
 			connect!
-			watch_for_socket_output
+			watch_for_socket_output!
 		end
 
 		public
@@ -29,7 +27,10 @@ module LTSocketIO
 
 		private
 
-		def connect!; @handler.send_data "1::#{@handler.host}" end
+		def connect!;
+			DEBUG.info "Connecting! #{@handler.host}"
+			@handler.send_data "1::#{@handler.host}"
+		end
 
 		def create_watching_fiber
 			if @watching_fiber.nil? || !@watching_fiber.alive?
@@ -45,30 +46,14 @@ module LTSocketIO
 			return @watching_fiber	
 		end
 
-		def watch_for_socket_output
-			main_thread = Thread.new do
-
-				DEBUG.info "Start watching for results"
-				# fiber 	= Fiber.new do |data|
-
-				# 	puts "I'm a fiber"
-				# 	Fiber.yield
-
-				# end
-				loop do
-					DEBUG.info "== FIBER_STARTS"
-					DEBUG.info "#{@handler.receive_data.to_s}"
-					DEBUG.info "== FIBER_STOPS"
+		def watch_for_socket_output!
+			@thread = Thread.new() do
+				while data = @handler.receive_data
+					DEBUG.info data.is_a? String
+					DEBUG.info ResponseParser.parse(data)
 				end
-
-
-				# loop do
-				# 	DEGUB.info "woooohooo"
-				# 	# data = @handler.receive_data
-				# end
-
 			end
-			main_thread
+			@thread
 		end
 
 

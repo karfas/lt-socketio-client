@@ -4,6 +4,8 @@ io.sockets.on "connection", (socket)->
 
 	socket.on "message", (msg)->
 		console.log "Received message: #{msg}"
+		socket.emit("event", { hello: "world", world: "hello" })
+		socket.emit("event", { hello: "world", world: "hello", ololo: "trololo" })
 
 	socket.on "hello", (data)->
 		console.log data

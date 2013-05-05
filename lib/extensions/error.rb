@@ -12,6 +12,18 @@ module LTSocketIO
 
 		class Handler < ::LTSocketIO::Error
 
+			class InvalifInput < ::LTSocketIO::Error::Handler
+				def message; :invalid_input end
+			end
+
+			class InvalidOrigin < ::LTSocketIO::Error::Handler
+				def message; :invalid_origin end
+			end
+
+			class InvalidHeader < ::LTSocketIO::Error::Handler
+				def message; :invalid_header end
+			end
+
 			class HandshakeFailed < ::LTSocketIO::Error::Handler
 				def message; :handshake_failed end
 			end
@@ -24,8 +36,12 @@ module LTSocketIO
 				def message; :binary_data_not_supported_yet end
 			end
 
-			class BadResponseReceived < ::LTSocketIO::Error::Handler
-				def message; :bad_response_received end
+			class BadRequest < ::LTSocketIO::Error::Handler
+				def message; :bad_request end
+			end
+
+			class BadResponse < ::LTSocketIO::Error::Handler
+				def message; :bad_response end
 			end
 
 			class UnknownOpcode < ::LTSocketIO::Error::Handler

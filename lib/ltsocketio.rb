@@ -7,6 +7,7 @@ module LTSocketIO
 	log_file.sync	= true
 	DEBUG 			= ::DebugLogger.new log_file
 
+	autoload :WebsockerSecure, 	"#{ROOT}/extensions/generators/websocket_secure"
 	autoload :OPCode, 			"#{ROOT}/extensions/enum/opcode"
 	autoload :State, 			"#{ROOT}/extensions/enum/state"
 	autoload :Debug, 			"#{ROOT}/extensions/logger"

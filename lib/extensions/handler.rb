@@ -1,3 +1,4 @@
+
 require 'rest_client'
 require 'ostruct'
 require 'websocket'
@@ -28,24 +29,19 @@ module LTSocketIO
 		end
 
 		def connect(uri, session_id, heartbeat_timeout, connection_timeout, transports, options)
-			@socket 	= TCPSocket.new uri.host, uri.port
-			@websocket 	= WebSocket::Handshake::Client.new(:url => create_websocket_uri(uri, session_id), :port => uri.port)
-			send_ws_handshake!
-			keep_alive!(options) if options[:keep_alive]
-			state State::CONNECTED
-			return true
+			@socket 	= create_tcp_connection(uri)
+			@websocket 	= generate_client_header(uri, session_id) #WebSocket::Handshake::Client.new(:url => create_websocket_uri(uri, session_id), :port => uri.port)
+			@socket.write(@websocket.header)
+			@socket.flush()
+			# keep_alive!(options) if options[:keep_alive]
+			
+			return check_ws_handshake!
 		end
 
 		def close( code = 1005, reason = "", origin = :self )
 			if !is(State::CLOSED) && !is(State::CLOSING)
 				state State::CLOSING
-				case @websocket.version
-				when 75, 76
-					write("\xff\x00")
-				else
-					payload = (code == 1005) ? "" : payload = [code].pack('n') + force_encoding(reason.dup(), 'ASCII-8BIT')
-					send_data(payload, :close)
-				end
+				@socket.write("\xff\x00")
 			end
 			@socket.close() if origin == :peer
 			state State::CLOSED
@@ -54,56 +50,54 @@ module LTSocketIO
 		def send_data(data, type = :text)
 			frame = outgoing_frame.new({
 				:version 	=> @websocket.version,
-				:data 		=> data,
+				:data 		=> force_encoding(data.dup(), 'ASCII-8BIT'),
 				:type 		=> type
 			})
-			@socket.write(frame)
+			@socket.write(frame.to_s)
+			@socket.flush()
 		end
 
 		def receive_data
-			bytes 	= read(2).unpack('C*')
-			opcode 	= bytes[0] & 0x0f
-			mask 	= (bytes[1] & 0x80) != 0
-			plength = bytes[1] & 0x7f
-			DEBUG.info "Getting data. Initialize"
+			frame = incoming_frame.new( :version => "hixie-76", :type => :text )
+			data 		= force_encoding(read(2).to_s, "UTF-8").unpack("C*")
+			# unpacked	= data.unpack("C*")
+			DEBUG.info "===[ #{data} ]==="
+			DEBUG.info "===[ opcode:#{data[0] & 0x0f} ]==="
+			DEBUG.info "===[ length:#{data[1] & 0x7f} ]==="
+			DEBUG.info "===[ #{read(data[1] & 0x7f)} ]==="
+			# DEBUG.ingo unpacked
+			return ""
+			begin
+				bytes 		= read(2).unpack('C*')
+				opcode 		= bytes[0] & 0x0f
+				plength 	= bytes[1] & 0x7f
 
-			DEBUG.info [read(2).unpack('A*'), bytes, opcode, mask, plength]
-			case plength
-			when 126
-				bytes 		= read(2)
-				plength		= bytes.unpack('n').first
-			when 127
-				bytes 		= read(8)
-				(high, low) = bytes.unpack('NN')
-				plength 	= high * ( 2 ** 32 ) + low
-			end
+				DEBUG.info [bytes, opcode, plength]
+				if plength == 126
+					bytes 		= read(2)
+					plength 	= bytes.unpack('n')[0]
+				elsif plength == 127
+					bytes 		= read(8)
+					(high, low) = bytes.unpack('NN')
+					plength 	= high * (2 ** 32) + low
+				end
 
-			DEBUG.info "Data resolved"
+				payload 	= read(plength)
+				result 		= nil
 
-			return nil unless mask
-
-			mask_key 	= mask ? read(4).unpack('C*') : nil
-			payload 	= read(plength)
-			payload 	= apply_mask(payload, mask_key) if mask
-
-			DEBUG.info "Building response"
-			case opcode
-			when OPCode::TEXT
-				puts "Text received"
-				return force_encoding(payload, 'UTF-8')
-			when OPCode::BINARY
-				raise(WebSocket::Error, 'received binary data, which is not supported')
-			when OPCode::CLOSE
-				puts "Close received"
-				close(1005, '', :peer) and return
-			when OPCode::PING
-				raise(LTSocketIO::Error::Handler::PingNotSupportedYet)
+				DEBUG.info "Payload: #{payload}"
+				case opcode
+					when OPCode::CONTINUATION	then result = "1::"
+					when OPCode::TEXT 			then result = force_encoding(payload, 'UTF-8')
+					when OPCode::BINARY 		then raise(LTSocketIO::Error::Handler::BinaryDataNotSupportedYet)
+					when OPCode::CLOSE 			then close(1005, '', :peer)
+					when OPCode::PING 			then raise(LTSocketIO::Error::Handler::PingDataNotSupportedYet)
+					else result = ""
+				end
+				return result
+			rescue EOFError
 				return nil
-			when OPCode::PONG
-			else
-				raise(LTSocketIO::Error::Handler::UnknownOpcode, 'received unknown opcode: %d' % opcode)
-				return nil
-			end
+			end			
 		end
 
 		def handshaked?; @handshaked end
@@ -120,37 +114,41 @@ module LTSocketIO
 		end
 
 		def create_websocket_uri(uri, session_id)
-			protocol = uri.protocol == "https" ? "wss" : "ws"
-			return "#{protocol}://#{uri.host}/#{@resource}/1/websocket/#{session_id}"
+			protocol 	= uri.protocol == "https" ? "wss" : "ws"
+			result_uri	= "#{protocol}://#{uri.host}/#{@resource}/1/websocket/#{session_id}"
+			return result_uri
 		end
+
+		def create_tcp_connection(uri); TCPSocket.new(uri.host, uri.port) end
 
 		def scan_uri(uri)
 			uri_data = uri.scan(/(http[s]?:\/\/?)?([^:]+)(:([\d]+))?(\/([^\?]+))?(\?(.+))?/).first
 			OpenStruct.new({
 				:protocol	=> 	uri_data[0] 	|| 'http',
 				:host		=> 	uri_data[1] 	|| 'localhost',
+				:origin 	=>  (uri_data[0] || 'http') + "://" + (uri_data[1] || 'localhost') + (uri_data[3] ? ":#{uri_data[3]}" : ""),
 				:port		=> 	(uri_data[3] 	|| 80).to_i,
 				:path		=> 	uri_data[4] 	|| "",
 				:params		=> 	uri_data[6]	 	|| ""
 			})
 		end
 
-		def send_ws_handshake!;
-			@socket.write @websocket.to_s
-			line = @socket.gets($/).chomp()
-
-			raise LTSocketIO::Error::Handler::BadResponse unless (line =~ /\AHTTP\/1.1 101 /n)
-
-			flush
+		def check_ws_handshake!;
+			line 			= @socket.gets.chomp
+			headers 		= read_header
+			origin  		= (headers['sec-websocket-origin'] || '').downcase
+			server_digest 	= @socket.read(16)
+			
+			raise(LTSocketIO::Error::Handler::BadResponse) 		unless line =~ /\AHTTP\/1.1 101 /n
+			raise(LTSocketIO::Error::Handler::InvalidOrigin) 	unless origin == @websocket.uri.origin.downcase
+			raise(LTSocketIO::Error::Handler::HandshakeFailed) 	unless server_digest == @websocket.digest
+			state State::CONNECTED
+			return true
 		end
 
 		def apply_mask(payload, mask_key)
-			# puts [payload, mask_key]
-			orig_bytes = payload.unpack('C*')
-			new_bytes = []
-			orig_bytes.each_with_index() do |b, i|
-				new_bytes.push(b ^ mask_key[i % 4])
-			end
+			orig_bytes, new_bytes = payload.unpack('C*'), []
+			orig_bytes.each_with_index {|b, i| new_bytes.push(b ^ mask_key[i % 4])}
 			new_bytes.pack('C*')
 		end
 
@@ -164,11 +162,59 @@ module LTSocketIO
 			end
 		end
 
+		def generate_client_header(uri, session_id)
+			hreader_string 	= "GET /socket.io/1/websocket/#{session_id} HTTP/1.1\r\n"
+			headers 		= {
+				"Upgrade" 		=> "WebSocket",
+				"Connection"	=> "Upgrade",
+				"Host" 			=> uri.host,
+				"Origin" 		=> uri.origin
+			}
+			# generate keys
+			key1, key2, key3 = WebsockerSecure.generate_key_1, WebsockerSecure.generate_key_1, WebsockerSecure.generate_key_3
+
+			headers["Sec-WebSocket-Key1"] = key1
+			headers["Sec-WebSocket-Key2"] = key2
+
+			headers_compiled 	= (headers.map() {|key, value| "#{key}: #{value}\r\n" }).join("")
+			headers_result 		= hreader_string + headers_compiled + "\r\n" + key3
+
+			return OpenStruct.new({
+				:header 	=> headers_result,
+				:version 	=> 76,
+				:uri 		=> uri,
+				:digest 	=> WebsockerSecure.generate_extra_bytes(key1, key2, key3)
+			})
+		end
+
+		def force_encoding(str, encoding); str.respond_to?(:force_encoding) ? str.force_encoding(encoding) : str end
+
+		def read_header
+			header_hash = {}
+			while (line = gets())
+				line = line.chomp()
+				break if line.empty?
+				raise(LTSocketIO::Error::Handler::BadResponse, "invalid request: #{line}") unless line =~ /\A(\S+): (.*)\z/n
+				header_hash[$1] = $2
+				header_hash[$1.downcase()] = $2
+			end
+			raise(LTSocketIO::Error::Handler::InvalidHeader, "Upgrade must be WebSocker, got %p" % header_hash['upgrade']) 		unless header_hash['upgrade'] =~ /\AWebSocket\z/i
+			raise(LTSocketIO::Error::Handler::InvalidHeader, "Connection must be Upgrade, got %p" % header_hash['connection']) 	unless header_hash['connection'] =~ /\AUpgrade\z/i
+			return header_hash
+		end
+
 		def incoming_frame; WebSocket::Frame::Incoming::Client end
 		
 		def outgoing_frame; WebSocket::Frame::Outgoing::Client end
 
-		def read(num_bytes); @socket.read(num_bytes) end
+		def read(num_bytes);
+			str = @socket.read(num_bytes)
+			if str && str.bytesize == num_bytes
+				str
+			else
+				raise(EOFError)
+			end
+		end
 
 		def write(data); @socket.write(data) end
 
